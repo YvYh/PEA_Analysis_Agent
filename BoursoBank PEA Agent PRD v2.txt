@@ -1,0 +1,91 @@
+﻿BoursoBank PEA 智能投资助手 Agent 需求规格说明书 (PRD v2.0)
+1. 系统定位与核心目标
+* 系统名称： PEA Portfolio & Market Analysis Agent
+* 定位： 针对法国 BoursoBank PEA 账户的轻量级定时监控、全闭环量化决策（买入/持有/减仓/清仓）与市场分析助手。
+* 核心职责： 定时抓取行情、结合用户输入的市场资讯、执行带硬性风控的交易逻辑，输出包含具体金额与股数的操作指令。
+2. 标的范围与数据源配置 (Data Pipeline)
+2.1 标的范围 (Investment Universe)
+* 核心层（Core）： 跟踪全球/主流指数的 PEA 合规 ETF（如 MSCI World CW8、S&P 500 ESE 等）。
+* 卫星层（Satellite）： 法国 CAC 40 成分股（如 LVMH, TotalEnergies, ASML, Sanofi 等）。
+2.2 数据源 (Data Ingestion)
+1. 持仓数据： 用户通过文本/CSV 手动粘贴输入持仓（标的代码、持仓股数、持仓均价）。
+2. 行情与指标数据： 调用 Python yfinance 库，拉取目标标的的日线、均线（MA20/MA50/MA200）、RSI 及历史价格偏离度。
+3. 市场要闻： Agent 联网搜索（Web Search）获取公开财经资讯。
+4. 自定义用户输入： 支持用户在交互界面随时粘贴自定义新闻文本或网页 URL，Agent 自动提取关键逻辑并纳入综合分析。
+3. 决策逻辑与风控引擎 (Quant & Risk Engine)
+3.1 买入与加仓逻辑 (Buy / DCA / Dip)
+* 基础定投 (Base DCA)： 按设定周期执行基础拟定投金额。
+* 动态抄底触发器 (Dynamic Dip Trigger)：
+   * 标的较近期高点回调超过设定阈值（如 $X\%$）。
+   * 技术指标跌破关键支持位（如价格跌破 MA20 且 RSI ）。
+   * 满足条件时，算入附加加仓金额 。
+3.2 减仓逻辑 (Position Reduction / Take-Profit)
+   * 仓位占比超限再平衡： 当某一 CAC 40 个股因持续上涨导致其在 PEA 总持仓中的占比超过设定阈值（如 $> 15\%$），触发再平衡减仓指令，建议卖出部分股票使占比降至目标安全线（如 $10\%$），释放资金以加仓指数 ETF。
+   * 阶段性止盈触发： 标的短期涨幅过大、技术指标严重超买（如 RSI  或价格高于 MA200 超过 $20\%$），触发阶梯止盈，建议卖出该标的 $20\%\sim30\%$ 的持仓股数。
+3.3 清仓逻辑 (Full Liquidation / Stop-Loss)
+      * 硬性止损清仓： 卫星层（CAC 40 个股）持仓亏损达到设定比例（如相比持仓均价下跌超过 $-15\%\sim -20\%$），无条件触发止损清仓建议。
+      * 基本面恶化/指数剔除清仓：
+      * 个股出现重大财务预警、管理层丑闻或行业基本面发生不可逆逆转。
+      * 个股被剔除出 CAC 40 指数成分股。
+      * 标的周线连续 2 周收于 MA200 下方且技术形态破位，触发防守型清仓。
+3.4 资金与风控边界 (Risk Control)
+      * 月度预算硬上限 (Monthly Budget Cap)：
+
+      *          * 当月推荐买入累积金额达到上限后，Agent 自动将所有“买入指令”置零，报告仅输出持仓诊断与减仓/清仓建议。
+4. 触发机制与推送渠道 (Schedule & Delivery)
+触发方式
+	执行时间
+	输出渠道
+	分析时间跨度
+	定时任务 1
+	每周日晚 (收盘后/开盘前)
+	Email 推送
+	过去 1 周宏观 + 抄底/止盈计算 + 下周建仓/调仓指令
+	定时任务 2
+	每周三中午 (开盘前)
+	Email 推送
+	过去 72 小时盘面变动 + 周中动态调整指令
+	即时交互
+	用户在对话界面随时发起
+	对话界面即时回复
+	过去 24 小时市场动态 + 综合用户自定义 URL/文本解析
+	5. Agent 报告输出规范 (Output Specification)
+Agent 输出的所有报告必须遵循以下 Markdown 结构：
+Markdown
+# 📈 PEA 投资周报 / 24h 即时诊断
+
+
+## 1. 持仓概览与资金状态
+- 当前总资产估计：€XXXX.XX
+- 本月已用买入额度：€XXX / 硬上限 €XXX (剩余硬顶额度：€XXX)
+
+
+## 2. 核心量化操作指令 (Actionable Directives)
+| 标的名称/代码 | 当前价格 | 建议操作 | 建议金额/股数 | 触发逻辑/依据 |
+| :--- | :--- | :--- | :--- | :--- |
+| CW8 (MSCI World) | €XXX.XX | 买入 (DCA+抄底) | €200 (约 X 股) | 跌破 20 日均线，触发 B 级动态加仓 |
+| MC (LVMH) | €XXX.XX | 阶梯减仓 | 卖出 X 股 (约 €XXX) | RSI 指标已达 73 (超买)，且占比偏离度超限 |
+| TTE (TotalEnergies)| €XXX.XX | 无条件清仓 | 卖出全部持仓 | 触发 -15% 跌幅硬止损线，防守避险 |
+
+
+## 3. 市场动态与要闻解析
+- **CAC 40 重点资讯：** [财报/宏观要闻摘要]
+- **用户自选资讯解析：** [结合用户输入的 URL/文本提取的分析]
+
+
+## 4. 风险与警示提醒
+- [针对个股占比、大盘回调或减仓清仓逻辑的具体风险提示]
+
+
+6. Agent 系统 Prompt 指令集 (System Prompt Reference)
+Plaintext
+You are a quantitative portfolio management agent specialized in French BoursoBank PEA accounts. 
+Your target universe is restricted to Global/US Index ETFs (e.g., CW8, ESE) and French CAC 40 stocks.
+
+
+Core Directives:
+1. FULL DECISION CYCLE: Output explicit buy, hold, reduce (sell portion), or liquidate (sell all) actions with exact EUR values and share quantities.
+2. BUY BUDGET CAP: Strictly enforce the monthly budget hard cap. If total recommended buys hit the limit, set all new purchase amounts to €0.
+3. REDUCTION & TAKE-PROFIT: Recommend partial reduction if an individual CAC 40 stock exceeds target portfolio weight (e.g., >15%) or technicals indicate extreme overbought conditions (RSI > 70).
+4. LIQUIDATION & STOP-LOSS: Recommend full liquidation if a satellite stock hits the hard stop-loss threshold (-15% to -20% from average cost) or is removed from the CAC 40 index.
+5. DATA FUSION: Combine yfinance metrics, Web Search news, and user-provided URLs/texts into actio
