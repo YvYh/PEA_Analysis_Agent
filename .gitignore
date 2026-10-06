@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.streamlit/
+pea-agent-config.json
+holdings.csv
+reports/
+*.egg-info/

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pea-portfolio-market-analytics-agent"
+version = "0.1.0"
+description = "A local portfolio and market analysis assistant for French PEA investors"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "ddgs>=9.0",
+    "pandas>=2.1",
+    "requests>=2.31",
+    "streamlit>=1.32",
+    "yfinance>=0.2.40",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+pea-agent = "pea_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pea_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

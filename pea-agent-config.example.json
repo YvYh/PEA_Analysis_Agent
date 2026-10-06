@@ -1,0 +1,21 @@
+{
+  "monthly_budget_cap": 500,
+  "month_to_date_buys": 0,
+  "cash_available": 0,
+  "include_base_dca": true,
+  "dca_amounts": {
+    "CW8": 200,
+    "ESE": 100
+  },
+  "dip_drawdown_pct": 8,
+  "dip_rsi_threshold": 45,
+  "dip_additional_multiplier": 0.5,
+  "satellite_stop_loss_pct": 15,
+  "max_satellite_weight_pct": 15,
+  "target_satellite_weight_pct": 10,
+  "take_profit_rsi": 70,
+  "take_profit_ma200_premium_pct": 20,
+  "take_profit_fraction": 0.25,
+  "removed_from_cac40": [],
+  "fundamental_exit_symbols": []
+}
