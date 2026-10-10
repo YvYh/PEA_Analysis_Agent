@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
@@ -14,6 +14,13 @@ class Position:
     symbol: str
     shares: int
     average_cost: float
+    kind: AssetKind
+    name: str = ""
+
+
+@dataclass(frozen=True)
+class WatchItem:
+    symbol: str
     kind: AssetKind
     name: str = ""
 
@@ -35,14 +42,9 @@ class MarketData:
 
 @dataclass(frozen=True)
 class AnalysisConfig:
-    monthly_budget_cap: float = 500.0
-    month_to_date_buys: float = 0.0
     cash_available: float = 0.0
-    include_base_dca: bool = True
-    dca_amounts: dict[str, float] = field(default_factory=dict)
     dip_drawdown_pct: float = 8.0
     dip_rsi_threshold: float = 45.0
-    dip_additional_multiplier: float = 0.5
     satellite_stop_loss_pct: float = 15.0
     max_satellite_weight_pct: float = 15.0
     target_satellite_weight_pct: float = 10.0
@@ -79,12 +81,11 @@ class Directive:
 @dataclass(frozen=True)
 class PortfolioAnalysis:
     positions: tuple[Position, ...]
+    watchlist: tuple[WatchItem, ...]
     quotes: dict[str, MarketData]
     directives: tuple[Directive, ...]
+    securities_value: float
     portfolio_value: float
-    month_to_date_buys: float
-    budget_cap: float
-    remaining_budget: float
     cash_available: float
     warnings: tuple[str, ...] = ()
     news: tuple[NewsItem, ...] = ()

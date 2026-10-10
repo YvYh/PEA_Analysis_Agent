@@ -4,7 +4,6 @@ import argparse
 import os
 import smtplib
 import ssl
-from dataclasses import replace
 import sys
 from email.message import EmailMessage
 from pathlib import Path
@@ -15,6 +14,7 @@ from pea_agent.market_data import fetch_market_data
 from pea_agent.news import search_market_news
 from pea_agent.portfolio import parse_positions
 from pea_agent.report import render_report
+from pea_agent.storage import load_watchlist
 
 
 def _send_email(report: str) -> None:
@@ -38,12 +38,12 @@ def _send_email(report: str) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a PEA portfolio analysis report.")
     parser.add_argument("--holdings", type=Path, default=Path("holdings.csv"), help="CSV with symbol,shares,average_cost[,kind,name].")
-    parser.add_argument("--config", type=Path, default=Path("pea-agent-config.json"), help="JSON file with budget and risk settings.")
+    parser.add_argument("--watchlist", type=Path, default=Path("watchlist.csv"), help="CSV with symbol[,kind,name].")
+    parser.add_argument("--config", type=Path, default=Path("pea-agent-config.json"), help="JSON file with cash and risk settings.")
     parser.add_argument("--output", type=Path, help="Optional Markdown report output path.")
     parser.add_argument("--send-email", action="store_true", help="Send the report using PEA_SMTP_* environment variables.")
     parser.add_argument("--search-news", action="store_true", help="Search public web news (requires internet access).")
     parser.add_argument("--instant", action="store_true", help="Use the instant-diagnosis report title.")
-    parser.add_argument("--no-base-dca", action="store_true", help="Disable scheduled base DCA while retaining any dip-triggered buys.")
     return parser
 
 
@@ -51,14 +51,15 @@ def main() -> None:
     args = _parser().parse_args()
     try:
         positions = parse_positions(args.holdings.read_text(encoding="utf-8-sig"))
-        if not positions:
-            raise ValueError(f"No holdings found in {args.holdings}.")
+        watchlist = load_watchlist(args.watchlist)
+        if not positions and not watchlist:
+            raise ValueError(f"No holdings or watchlist items found in {args.holdings} and {args.watchlist}.")
         config = load_config(args.config)
-        if args.no_base_dca:
-            config = replace(config, include_base_dca=False)
-        symbols = tuple(dict.fromkeys([position.symbol for position in positions] + list(config.dca_amounts)))
+        symbols = tuple(dict.fromkeys(
+            [position.symbol for position in positions] + [item.symbol for item in watchlist]
+        ))
         news = search_market_news(symbols) if args.search_news else ()
-        analysis = analyze_portfolio(positions, config, fetch_market_data, news)
+        analysis = analyze_portfolio(positions, config, fetch_market_data, news, watchlist)
         report = render_report(analysis, instant=args.instant)
         print(report)
         if args.output:

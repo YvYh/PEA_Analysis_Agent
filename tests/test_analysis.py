@@ -5,10 +5,18 @@ import pytest
 
 from pea_agent.analysis import analyze_portfolio
 from pea_agent.market_data import analyze_history
-from pea_agent.models import AnalysisConfig, MarketData, NewsItem, Position
+from pea_agent.models import AnalysisConfig, MarketData, NewsItem, Position, WatchItem
 from pea_agent.news import analyze_user_text
-from pea_agent.portfolio import parse_dca_amounts, parse_positions
+from pea_agent.portfolio import parse_positions
 from pea_agent.report import render_report
+from pea_agent.storage import (
+    load_cash,
+    load_positions,
+    load_watchlist,
+    save_cash,
+    save_positions,
+    save_watchlist,
+)
 
 
 def quote(symbol: str, name: str, price: float, **overrides) -> MarketData:
@@ -59,17 +67,86 @@ def test_parses_french_semicolon_csv_and_decimal_comma():
     assert position.average_cost == 450.5
 
 
-def test_dca_respects_monthly_cap_and_whole_share_orders():
-    positions = (Position("CW8.PA", 1, 90, "core"),)
-    quotes = {"CW8.PA": quote("CW8.PA", "World ETF", 100, drawdown_from_recent_high=0)}
-    config = AnalysisConfig(monthly_budget_cap=250, month_to_date_buys=100, dca_amounts={"CW8.PA": 200})
-    quotes["CW8.PA"] = quote("CW8.PA", "World ETF", 100, ma20=101, rsi=50, drawdown_from_recent_high=0)
-    result = analyze_portfolio(positions, config, provider_factory(quotes))
+def test_watchlist_signals_allocate_cash_by_strength_and_whole_shares():
+    watchlist = (WatchItem("CW8.PA", "core"), WatchItem("ESE.PA", "core"))
+    quotes = {
+        "CW8.PA": quote("CW8.PA", "World ETF", 100, ma20=101, rsi=40, drawdown_from_recent_high=-10),
+        "ESE.PA": quote("ESE.PA", "S&P 500 ETF", 50, ma20=51, rsi=40, drawdown_from_recent_high=-2),
+    }
+    result = analyze_portfolio((), AnalysisConfig(cash_available=250), provider_factory(quotes), watchlist=watchlist)
     buys = [item for item in result.directives if item.action == "buy"]
-    assert len(buys) == 1
-    assert buys[0].shares == 1
-    assert buys[0].amount == 100
-    assert sum(item.amount for item in buys) <= result.remaining_budget
+    assert {item.symbol: item.shares for item in buys} == {"CW8.PA": 2, "ESE.PA": 1}
+    assert sum(item.amount for item in buys) == 250
+
+
+def test_watchlist_fractional_prices_never_exceed_cash():
+    result = analyze_portfolio(
+        (),
+        AnalysisConfig(cash_available=0.3),
+        provider_factory({
+            "CW8.PA": quote("CW8.PA", "World ETF", 0.1, ma20=0.11, rsi=40, drawdown_from_recent_high=-10)
+        }),
+        watchlist=(WatchItem("CW8.PA", "core"),),
+    )
+    assert sum(item.amount for item in result.directives if item.action == "buy") <= 0.3
+
+
+def test_watchlist_items_without_quotes_are_still_reported():
+    result = analyze_portfolio(
+        (),
+        AnalysisConfig(cash_available=300),
+        provider_factory({}),
+        watchlist=(WatchItem("CW8.PA", "core"),),
+    )
+    assert len(result.directives) == 1
+    assert result.directives[0].symbol == "CW8.PA"
+    assert result.directives[0].price is None
+    assert "行情获取失败" in result.directives[0].rationale
+
+
+def test_watchlist_risk_news_blocks_new_buy():
+    item = WatchItem("MC.PA", "satellite")
+    quote_data = quote("MC.PA", "LVMH", 100, ma20=101, rsi=30, drawdown_from_recent_high=-20)
+    news = analyze_user_text("MC is under investigation following an accounting scandal.", ("MC.PA",))
+    result = analyze_portfolio(
+        (),
+        AnalysisConfig(cash_available=1000),
+        provider_factory({"MC.PA": quote_data}),
+        news,
+        (item,),
+    )
+    assert result.directives[0].action == "hold"
+    assert "风险关键词" in result.directives[0].rationale
+
+
+def test_watchlist_existing_holding_uses_combined_buy_and_holding_data():
+    position = Position("CW8.PA", 2, 90, "core")
+    item = WatchItem("CW8.PA", "core")
+    result = analyze_portfolio(
+        (position,),
+        AnalysisConfig(cash_available=100),
+        provider_factory({"CW8.PA": quote("CW8.PA", "World ETF", 100, ma20=101, rsi=40, drawdown_from_recent_high=-10)}),
+        watchlist=(item,),
+    )
+    assert len(result.directives) == 1
+    assert result.directives[0].action == "buy"
+    assert result.securities_value == 200
+    assert result.portfolio_value == 300
+
+
+def test_watchlist_signal_is_reported_with_existing_sell_directive():
+    position = Position("MC.PA", 10, 100, "satellite")
+    item = WatchItem("MC.PA", "satellite")
+    result = analyze_portfolio(
+        (position,),
+        AnalysisConfig(cash_available=1000),
+        provider_factory({"MC.PA": quote("MC.PA", "LVMH", 80, rsi=30, drawdown_from_recent_high=-20)}),
+        watchlist=(item,),
+    )
+    assert len(result.directives) == 1
+    assert result.directives[0].action == "liquidate"
+    assert "观察名单分析" in result.directives[0].rationale
+    assert "暂不建议买入" in result.directives[0].rationale
 
 
 def test_hard_stop_loss_takes_precedence_over_other_signals():
@@ -192,7 +269,7 @@ def test_user_supplied_links_and_text_are_reported_separately():
     )
     from pea_agent.models import PortfolioAnalysis
 
-    analysis = PortfolioAnalysis((), {}, (), 0, 0, 500, 500, 0, news=items)
+    analysis = PortfolioAnalysis((), (), {}, (), 0, 0, 0, news=items)
     report = render_report(analysis)
     market_section = report.split("**CAC 40 重点资讯：**", 1)[1].split("**用户自选资讯解析：**", 1)[0]
     user_section = report.split("**用户自选资讯解析：**", 1)[1].split("## 4.", 1)[0]
@@ -205,8 +282,9 @@ def test_report_has_required_sections_and_clear_share_counts():
     positions = (Position("CW8.PA", 1, 90, "core"),)
     result = analyze_portfolio(
         positions,
-        AnalysisConfig(dca_amounts={"CW8.PA": 100}),
-        provider_factory({"CW8.PA": quote("CW8.PA", "World ETF", 100, drawdown_from_recent_high=0)}),
+        AnalysisConfig(cash_available=100),
+        provider_factory({"CW8.PA": quote("CW8.PA", "World ETF", 100, drawdown_from_recent_high=-10)}),
+        watchlist=(WatchItem("CW8.PA", "core"),),
     )
     report = render_report(result)
     assert "## 1. 持仓概览与资金状态" in report
@@ -214,7 +292,9 @@ def test_report_has_required_sections_and_clear_share_counts():
     assert "## 3. 市场动态与要闻解析" in report
     assert "## 4. 风险与警示提醒" in report
     assert "买入 1 股" in report
-    assert "执行后剩余硬顶额度: €400.00" in report
+    assert "可用现金 (当前填写值): €100.00" in report
+    assert "Evaluation titre / 持仓证券估值: €100.00" in report
+    assert "Total value actuelle / 当前总资产: €200.00" in report
 
 
 def test_calculates_market_metrics_from_price_history():
@@ -236,8 +316,32 @@ def test_unfinished_current_week_is_not_a_weekly_exit_signal():
     assert metrics.weekly_closes_below_ma200 == 0
 
 
-def test_parses_dca_amounts():
-    assert parse_dca_amounts("ticker,amount\nCW8,€200\nESE,75.5") == {"CW8.PA": 200, "ESE.PA": 75.5}
+def test_local_csv_storage_round_trips_positions_and_watchlist(tmp_path):
+    holdings_path = tmp_path / "holdings.csv"
+    watchlist_path = tmp_path / "watchlist.csv"
+    positions = (Position("CW8.PA", 3, 450.5, "core", "World"),)
+    items = (WatchItem("MC.PA", "satellite", "LVMH"),)
+    save_positions(holdings_path, positions)
+    save_watchlist(watchlist_path, items)
+    assert load_positions(holdings_path) == positions
+    assert load_watchlist(watchlist_path) == items
+
+
+def test_local_cash_csv_round_trips_amount(tmp_path):
+    cash_path = tmp_path / "pea-agent-cash.csv"
+    save_cash(cash_path, 1234.56)
+    assert load_cash(cash_path) == pytest.approx(1234.56)
+    with pytest.raises(ValueError):
+        save_cash(cash_path, -1)
+
+
+def test_watchlist_parser_normalizes_and_rejects_duplicate_aliases():
+    from pea_agent.storage import parse_watchlist
+
+    parsed = parse_watchlist("ticker,kind,name\nCW8,core,World")
+    assert parsed == (WatchItem("CW8.PA", "core", "World"),)
+    with pytest.raises(ValueError, match="Duplicate watchlist"):
+        parse_watchlist("symbol\nCW8\nCW8.PA")
 
 
 def test_fundamental_exit_overrides_partial_profit_taking():

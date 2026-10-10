@@ -41,20 +41,17 @@ def _news_lines(items: tuple[NewsItem, ...], category: str) -> list[str]:
 
 def render_report(analysis: PortfolioAnalysis, instant: bool = False) -> str:
     title = "# 📈 PEA 24h 即时诊断" if instant else "# 📈 PEA 投资周报"
-    recommended_buys = sum(
-        directive.amount for directive in analysis.directives if directive.action == "buy"
-    )
-    remaining_after_recommendations = max(0.0, analysis.remaining_budget - recommended_buys)
+    recommended_buys = sum(directive.amount for directive in analysis.directives if directive.action == "buy")
     lines = [
         title,
         "",
         f"生成时间: {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')}",
         "",
         "## 1. 持仓概览与资金状态",
-        f"- 当前总资产估计 (含持仓与可用现金): {_euro(analysis.portfolio_value)}",
-        f"- 报告的可用现金 (仅供参考): {_euro(analysis.cash_available)}",
-        f"- 本月已用/已承诺买入额度 (不含本次建议): {_euro(analysis.month_to_date_buys)} / 硬上限 {_euro(analysis.budget_cap)}",
-        f"- 本次建议买入: {_euro(recommended_buys)} (执行后剩余硬顶额度: {_euro(remaining_after_recommendations)})",
+        f"- 可用现金 (当前填写值): {_euro(analysis.cash_available)}",
+        f"- Evaluation titre / 持仓证券估值: {_euro(analysis.securities_value)}",
+        f"- Total value actuelle / 当前总资产: {_euro(analysis.portfolio_value)}",
+        f"- 本次建议买入: {_euro(recommended_buys)} (不超过可用现金)",
         "",
         "## 2. 核心量化操作指令",
         "| 标的名称/代码 | 当前价格 | 建议操作 | 建议金额/股数 | 触发逻辑/依据 |",
@@ -86,7 +83,7 @@ def render_report(analysis: PortfolioAnalysis, instant: bool = False) -> str:
                 f"{directive.rationale}{technicals} |"
             )
     else:
-        lines.append("| — | — | 持有 | 未配置持仓或定投目标 | 添加持仓或定投目标以获取操作指令。 |")
+        lines.append("| — | — | 持有 | 暂无操作 | 添加持仓或观察名单标的以获取分析。 |")
     lines.extend(
         [
             "",
@@ -103,6 +100,10 @@ def render_report(analysis: PortfolioAnalysis, instant: bool = False) -> str:
         lines.extend(f"- {warning}" for warning in analysis.warnings)
     else:
         lines.append("- 所有分析标的均已获取行情数据；下单前请核实价格和资讯。")
+    if any(position.symbol not in analysis.quotes for position in analysis.positions):
+        lines.append("- 持仓估值不完整：存在行情缺失的持仓，总资产显示值可能偏低。")
+    if recommended_buys > analysis.cash_available:
+        lines.append("- 买入建议金额超过可用现金，检查现金分配逻辑后再交易。")
     for item in analysis.news:
         if item.risk_flags:
             lines.append(f"- 请核实资讯风险信号 ({', '.join(item.related_symbols) or item.title}): {', '.join(item.risk_flags)}。")

@@ -76,32 +76,3 @@ def parse_positions(text: str) -> tuple[Position, ...]:
             )
         )
     return tuple(positions)
-
-
-def parse_dca_amounts(text: str) -> dict[str, float]:
-    """Parse ticker,monthly-euros rows, one per line."""
-    amounts: dict[str, float] = {}
-    first_data_row = True
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        delimiter = ";" if ";" in stripped and "," not in stripped else ","
-        parts = next(csv.reader([stripped], delimiter=delimiter))
-        if first_data_row and parts[0].strip().lower() in {"symbol", "ticker", "code"}:
-            first_data_row = False
-            continue
-        first_data_row = False
-        if len(parts) != 2:
-            raise ValueError(f"DCA line {line_number} must contain ticker and amount.")
-        symbol = normalize_symbol(parts[0])
-        try:
-            amount = float(parts[1].strip().replace("€", "").replace(",", "."))
-        except ValueError as error:
-            raise ValueError(f"Invalid DCA amount on line {line_number}.") from error
-        if not symbol or not math.isfinite(amount) or amount < 0:
-            raise ValueError(f"DCA line {line_number} must have a ticker and a non-negative amount.")
-        if symbol in amounts:
-            raise ValueError(f"Duplicate DCA target for {symbol}.")
-        amounts[symbol] = amount
-    return amounts
